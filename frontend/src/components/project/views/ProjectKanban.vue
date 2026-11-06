@@ -20,6 +20,7 @@
 		<template #default>
 			<div class="kanban-view">
 				<div
+					ref="boardRef"
 					:class="{ 'is-loading': showInitialLoading, 'is-dragging': drag || dragBucket }"
 					class="kanban kanban-bucket-container loader-container"
 				>
@@ -301,7 +302,7 @@ import {
 	useUpdateBucketMutation,
 	useLoadBucketPageMutation,
 } from '@/client/queries/kanbanMutations'
-import {computed, nextTick, ref, watch, toRef} from 'vue'
+import {computed, nextTick, onBeforeUnmount, onMounted, ref, watch, toRef} from 'vue'
 import {useQuery, useQueryClient} from '@tanstack/vue-query'
 import {useRouter} from 'vue-router'
 import {useRouteQuery} from '@vueuse/router'
@@ -354,6 +355,8 @@ const DRAG_OPTIONS = {
 	dragClass: 'task-dragging',
 	delayOnTouchOnly: true,
 	delay: 1000,
+	scroll: true,
+	bubbleScroll: true,
 	// Mid-drag the pointer rests further than the default 35px from the edge, so auto-scroll never starts.
 	scrollSensitivity: 100,
 } as const
@@ -382,6 +385,53 @@ const bucketLimitInputRef = ref<HTMLInputElement | null>(null)
 const drag = ref(false)
 const dragBucket = ref(false)
 const sourceBucket = ref(0)
+
+const boardRef = ref<HTMLElement | null>(null)
+
+// The scroll container wraps the sortable root, which Sortable's own auto-scroll never reaches.
+const BOARD_SCROLL_ZONE = 100
+const BOARD_SCROLL_SPEED = 15
+let boardScrollPointer: {x: number, y: number} | null = null
+let boardScrollFrame = 0
+
+function stepBoardAutoScroll() {
+	const boardEl = boardRef.value
+	const pointer = boardScrollPointer
+	if (boardEl === null || pointer === null || (!drag.value && !dragBucket.value)) {
+		boardScrollFrame = 0
+		boardScrollPointer = null
+		return
+	}
+
+	const rect = boardEl.getBoundingClientRect()
+	if (pointer.x >= rect.right - BOARD_SCROLL_ZONE) {
+		boardEl.scrollLeft += BOARD_SCROLL_SPEED
+	} else if (pointer.x <= rect.left + BOARD_SCROLL_ZONE) {
+		boardEl.scrollLeft -= BOARD_SCROLL_SPEED
+	}
+
+	boardScrollFrame = requestAnimationFrame(stepBoardAutoScroll)
+}
+
+// Captured on document so nested drag handlers cannot swallow the events the scroll loop lives on.
+function trackBoardDragPointer(event: MouseEvent) {
+	boardScrollPointer = {x: event.clientX, y: event.clientY}
+	if ((drag.value || dragBucket.value) && boardScrollFrame === 0) {
+		boardScrollFrame = requestAnimationFrame(stepBoardAutoScroll)
+	}
+}
+
+onMounted(() => {
+	document.addEventListener('dragover', trackBoardDragPointer, true)
+	document.addEventListener('mousemove', trackBoardDragPointer, true)
+})
+
+onBeforeUnmount(() => {
+	document.removeEventListener('dragover', trackBoardDragPointer, true)
+	document.removeEventListener('mousemove', trackBoardDragPointer, true)
+	cancelAnimationFrame(boardScrollFrame)
+	boardScrollFrame = 0
+})
 
 const showBucketDeleteModal = ref(false)
 const bucketToDelete = ref(0)
