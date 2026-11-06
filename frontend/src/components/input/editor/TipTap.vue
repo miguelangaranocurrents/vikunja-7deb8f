@@ -152,7 +152,7 @@
 					{{ $t('misc.save') }}
 				</BaseButton>
 			</li>
-			<li v-if="!isEditing">
+			<li v-if="!isEditing && isEditEnabled">
 				<BaseButton
 					class="done-edit"
 					@click="() => setEdit()"
@@ -213,6 +213,7 @@ import inputPrompt from '@/helpers/inputPrompt'
 import {getScrollParent} from '@/helpers/getScrollParent'
 import {setLinkInEditor} from '@/components/input/editor/setLinkInEditor'
 import {saveEditorDraft, loadEditorDraft, clearEditorDraft} from '@/helpers/editorDraftStorage'
+import {sliceToPlainText} from '@/components/input/editor/copyAsText'
 import {error} from '@/message'
 
 const props = withDefaults(defineProps<{
@@ -611,6 +612,25 @@ async function promptImageAlt(src: string) {
 	liveEditor()?.chain().setTextSelection(pos + 1).run()
 }
 
+// Runs from the editor root so it always gets the last word over any inner copy handler and the browser default.
+function handleCopy(event: ClipboardEvent) {
+	const instance = liveEditor()
+	if (!instance || instance.isDestroyed || event.clipboardData === null || instance.state.selection.empty) {
+		return
+	}
+
+	const editorDocument = instance.view.dom.ownerDocument
+	const domSelection = editorDocument.getSelection()
+	if (domSelection !== null && domSelection.rangeCount > 0) {
+		const html = editorDocument.createElement('div')
+		html.appendChild(domSelection.getRangeAt(0).cloneContents())
+		event.clipboardData.setData('text/html', html.innerHTML)
+	}
+
+	event.clipboardData.setData('text/plain', sliceToPlainText(instance.state.selection.content()))
+	event.preventDefault()
+}
+
 onMounted(async () => {
 	if (props.editShortcut !== '') {
 		document.addEventListener('keydown', setFocusToEditor)
@@ -620,6 +640,8 @@ onMounted(async () => {
 	if (props.enableDiscardShortcut) {
 		tiptapInstanceRef.value?.addEventListener('keydown', handleEscapeKey)
 	}
+
+	tiptapInstanceRef.value?.addEventListener('copy', handleCopy)
 
 	await nextTick()
 
@@ -648,6 +670,8 @@ onBeforeUnmount(() => {
 	if (props.editShortcut !== '') {
 		document.removeEventListener('keydown', setFocusToEditor)
 	}
+
+	tiptapInstanceRef.value?.removeEventListener('copy', handleCopy)
 })
 
 function setModeAndValue(value: string) {
